@@ -249,7 +249,8 @@ class ClaudePanelApplet extends Applet.Applet {
 
     _onClearHistory() {
         global.log("Claude Panel: Clear history requested");
-        // TODO: Implement history clearing
+        // Clear all messages from chat
+        this._chatContent.destroy_all_children();
         this.menu.close();
     }
 
@@ -297,14 +298,26 @@ class ClaudePanelApplet extends Applet.Applet {
 
         this._resizeHandle.connect('button-press-event', Lang.bind(this, this._onDragStart));
 
-        // Add chat content area
-        let chatContent = new St.Label({
-            text: 'Chat area - Coming soon!',
-            style: 'color: #ccc;'
+        // Create scrollable chat content area
+        this._chatScrollView = new St.ScrollView({
+            style: 'padding: 5px;',
+            x_expand: true,
+            y_expand: true,
+            x_fill: true,
+            y_fill: true
+        });
+        this._chatScrollView.set_policy(St.PolicyType.NEVER, St.PolicyType.AUTOMATIC);
+
+        // Container for chat messages
+        this._chatContent = new St.BoxLayout({
+            vertical: true,
+            style: 'spacing: 8px;'
         });
 
+        this._chatScrollView.add_actor(this._chatContent);
+
         this._chatWindow.add(this._resizeHandle);
-        this._chatWindow.add(chatContent);
+        this._chatWindow.add(this._chatScrollView, { expand: true });
 
         // Add to chrome (top layer)
         Main.layoutManager.addChrome(this._chatWindow, {
@@ -464,9 +477,58 @@ class ClaudePanelApplet extends Applet.Applet {
         let message = this._entry.get_text();
         if (message.trim()) {
             global.log("Claude Panel: Message sent - " + message + " (mode: " + this._permissionMode + ")");
+
+            // Add message to chat window
+            this._addChatMessage('user', message);
+
+            // Clear entry
             this._entry.set_text('');
+
+            // Open chat window if not open
+            if (!this._chatOpen) {
+                this._openChatWindow();
+            }
+
+            // Scroll to bottom
+            this._scrollToBottom();
+
             // TODO: Send to Claude CLI and show response
         }
+    }
+
+    _addChatMessage(sender, text) {
+        let isUser = sender === 'user';
+        let prefix = isUser ? '> ' : '< ';
+
+        let messageLabel = new St.Label({
+            text: prefix + text,
+            style: 'color: #ccc; font-family: monospace;'
+        });
+        messageLabel.clutter_text.set_line_wrap(true);
+        messageLabel.clutter_text.set_line_wrap_mode(0); // WORD
+
+        this._chatContent.add(messageLabel);
+    }
+
+    _scrollToBottom() {
+        // Scroll to bottom after a brief delay to let layout update
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, Lang.bind(this, function() {
+            let vscroll = this._chatScrollView.get_vscroll_bar();
+            if (vscroll) {
+                let adjustment = vscroll.get_adjustment();
+                adjustment.set_value(adjustment.upper - adjustment.page_size);
+            }
+            return GLib.SOURCE_REMOVE;
+        }));
+    }
+
+    _openChatWindow() {
+        // Position window above the applet
+        let [x, y] = this.actor.get_transformed_position();
+        this._chatWindow.set_position(x, y - this._chatHeight - 10);
+        this._chatWindow.show();
+        this._chatOpen = true;
+        this._arrowIcon.set_icon_name('go-down-symbolic');
     }
 }
 
