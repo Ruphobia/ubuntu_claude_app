@@ -4,6 +4,7 @@ const Lang = imports.lang;
 const PopupMenu = imports.ui.popupMenu;
 const Gio = imports.gi.Gio;
 const GLib = imports.gi.GLib;
+const Main = imports.ui.main;
 
 class ClaudePanelApplet extends Applet.Applet {
     constructor(metadata, orientation, panel_height, instance_id) {
@@ -18,6 +19,8 @@ class ClaudePanelApplet extends Applet.Applet {
 
         // Track chat window state
         this._chatOpen = false;
+        this._chatHeight = this._config.chatHeight || 400;
+        this._chatWidth = this._config.chatWidth || 400;
 
         // Create container box for input and button
         this._container = new St.BoxLayout({
@@ -89,8 +92,13 @@ class ClaudePanelApplet extends Applet.Applet {
         // Add container to applet actor
         this.actor.add(this._container);
 
-        // Create settings menu
+        // Create chat window
+        this._createChatWindow();
+
+        // Create menu manager for settings
         this.menuManager = new PopupMenu.PopupMenuManager(this);
+
+        // Create settings menu
         this.menu = new Applet.AppletPopupMenu(this, orientation);
         this.menuManager.addMenu(this.menu);
 
@@ -184,8 +192,8 @@ class ClaudePanelApplet extends Applet.Applet {
             if (GLib.file_test(this._configFile, GLib.FileTest.EXISTS)) {
                 let [success, contents] = GLib.file_get_contents(this._configFile);
                 if (success) {
-                    let config = JSON.parse(contents);
-                    this._permissionMode = config.permissionMode || 'normal';
+                    this._config = JSON.parse(contents);
+                    this._permissionMode = this._config.permissionMode || 'normal';
                     return;
                 }
             }
@@ -193,16 +201,21 @@ class ClaudePanelApplet extends Applet.Applet {
             global.log("Claude Panel: Error loading config - " + e);
         }
 
-        // Default to normal mode
+        // Default config
+        this._config = {
+            permissionMode: 'normal',
+            chatHeight: 400,
+            chatWidth: 400
+        };
         this._permissionMode = 'normal';
     }
 
     _saveConfig() {
         try {
-            let config = {
-                permissionMode: this._permissionMode
-            };
-            let contents = JSON.stringify(config, null, 2);
+            this._config.permissionMode = this._permissionMode;
+            this._config.chatHeight = this._chatHeight;
+            this._config.chatWidth = this._chatWidth;
+            let contents = JSON.stringify(this._config, null, 2);
             GLib.file_set_contents(this._configFile, contents);
         } catch(e) {
             global.log("Claude Panel: Error saving config - " + e);
@@ -219,19 +232,72 @@ class ClaudePanelApplet extends Applet.Applet {
         this.menu.toggle();
     }
 
-    _onArrowClicked() {
-        // Toggle chat window open/closed
-        this._chatOpen = !this._chatOpen;
+    _createChatWindow() {
+        // Create a custom window using St.BoxLayout
+        this._chatWindow = new St.BoxLayout({
+            vertical: true,
+            style: `width: ${this._chatWidth}px; height: ${this._chatHeight}px; background-color: #2a2a2a; border: 1px solid #555; border-radius: 5px; padding: 10px;`,
+            visible: false,
+            reactive: true
+        });
 
-        // Update arrow icon direction
+        // Add header with down arrow button
+        let header = new St.BoxLayout({
+            vertical: false,
+            style: 'spacing: 5px; margin-bottom: 5px;'
+        });
+
+        let closeButton = new St.Button({
+            style_class: 'claude-close-button',
+            style: 'padding: 2px 4px;'
+        });
+        let closeIcon = new St.Icon({
+            icon_name: 'go-down-symbolic',
+            icon_size: 16
+        });
+        closeButton.set_child(closeIcon);
+        closeButton.connect('clicked', Lang.bind(this, this._onArrowClicked));
+
+        let titleLabel = new St.Label({
+            text: 'Claude Chat',
+            style: 'font-weight: bold; flex: 1;'
+        });
+
+        header.add(closeButton);
+        header.add(titleLabel);
+
+        // Add chat content area
+        let chatContent = new St.Label({
+            text: 'Chat area - Coming soon!',
+            style: 'color: #ccc;'
+        });
+
+        this._chatWindow.add(header);
+        this._chatWindow.add(chatContent);
+
+        // Add to chrome (top layer)
+        Main.layoutManager.addChrome(this._chatWindow, {
+            visibleInFullscreen: false,
+            affectsInputRegion: true
+        });
+    }
+
+    _onArrowClicked() {
+        // Toggle chat window
         if (this._chatOpen) {
-            this._arrowIcon.set_icon_name('go-down-symbolic');
-        } else {
+            this._chatWindow.hide();
+            this._chatOpen = false;
             this._arrowIcon.set_icon_name('go-up-symbolic');
+        } else {
+            // Position window above the applet
+            let [x, y] = this.actor.get_transformed_position();
+            this._chatWindow.set_position(x, y - this._chatHeight - 10);
+            this._chatWindow.show();
+            this._chatOpen = true;
+            this._arrowIcon.set_icon_name('go-down-symbolic');
         }
 
         global.log("Claude Panel: Chat window " + (this._chatOpen ? "opened" : "closed"));
-        // TODO: Actually show/hide chat window
     }
 
     _onSendMessage() {
