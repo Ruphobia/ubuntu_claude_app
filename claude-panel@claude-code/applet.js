@@ -272,31 +272,6 @@ class ClaudePanelApplet extends Applet.Applet {
 
         this._resizeHandle.connect('button-press-event', Lang.bind(this, this._onDragStart));
 
-        // Add header with down arrow button
-        this._header = new St.BoxLayout({
-            vertical: false,
-            style: 'spacing: 5px; margin-bottom: 5px; padding: 5px; background-color: rgba(255,255,255,0.05); border-radius: 3px;'
-        });
-
-        let closeButton = new St.Button({
-            style_class: 'claude-close-button',
-            style: 'padding: 2px 4px;'
-        });
-        let closeIcon = new St.Icon({
-            icon_name: 'go-down-symbolic',
-            icon_size: 16
-        });
-        closeButton.set_child(closeIcon);
-        closeButton.connect('clicked', Lang.bind(this, this._onArrowClicked));
-
-        let titleLabel = new St.Label({
-            text: 'Claude Chat',
-            style: 'font-weight: bold; flex: 1;'
-        });
-
-        this._header.add(closeButton);
-        this._header.add(titleLabel);
-
         // Add chat content area
         let chatContent = new St.Label({
             text: 'Chat area - Coming soon!',
@@ -304,7 +279,6 @@ class ClaudePanelApplet extends Applet.Applet {
         });
 
         this._chatWindow.add(this._resizeHandle);
-        this._chatWindow.add(this._header);
         this._chatWindow.add(chatContent);
 
         // Add to chrome (top layer)
@@ -336,15 +310,18 @@ class ClaudePanelApplet extends Applet.Applet {
         let [, currentY] = event.get_coords();
         let deltaY = this._dragStartY - currentY;
 
-        // Calculate new height (minimum 200px, maximum 800px)
-        let newHeight = Math.max(200, Math.min(800, this._dragStartHeight + deltaY));
+        // Calculate new height (minimum 100px, maximum 800px)
+        let newHeight = Math.max(100, Math.min(800, this._dragStartHeight + deltaY));
+
+        // Calculate actual deltaY based on constrained height
+        let actualDeltaY = newHeight - this._dragStartHeight;
 
         // Update window style
         this._chatWindow.set_style(`width: ${this._chatWidth}px; height: ${newHeight}px; background-color: #2a2a2a; border: 1px solid #555; border-radius: 5px; padding: 10px;`);
 
-        // Reposition window to keep bottom edge in same place
+        // Reposition window to keep bottom edge in same place, using actual delta
         let [x, ] = this._chatWindow.get_position();
-        this._chatWindow.set_position(x, this._dragStartWindowY - deltaY);
+        this._chatWindow.set_position(x, this._dragStartWindowY - actualDeltaY);
 
         this._chatHeight = newHeight;
 
