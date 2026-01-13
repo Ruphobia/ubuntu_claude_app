@@ -633,6 +633,26 @@ class ClaudePanelApplet extends Applet.Applet {
             this._chatCapturedEventId = global.stage.connect('captured-event', Lang.bind(this, function(stageActor, stageEvent) {
                 let type = stageEvent.type();
 
+                // Handle scroll events
+                if (type === Clutter.EventType.SCROLL) {
+                    let dominated = this._chatWindow.contains(stageEvent.get_source());
+                    if (dominated) {
+                        let vscroll = this._chatScrollView.get_vscroll_bar();
+                        if (vscroll) {
+                            let adjustment = vscroll.get_adjustment();
+                            let step = 50; // pixels to scroll per wheel tick
+                            let direction = stageEvent.get_scroll_direction();
+
+                            if (direction === Clutter.ScrollDirection.UP) {
+                                adjustment.set_value(adjustment.get_value() - step);
+                            } else if (direction === Clutter.ScrollDirection.DOWN) {
+                                adjustment.set_value(adjustment.get_value() + step);
+                            }
+                            return Clutter.EVENT_STOP;
+                        }
+                    }
+                }
+
                 // Only handle button press events for releasing focus
                 if (type === Clutter.EventType.BUTTON_PRESS) {
                     let dominated = this._chatText.contains(stageEvent.get_source());
@@ -667,6 +687,8 @@ class ClaudePanelApplet extends Applet.Applet {
                     this._releaseChatFocus();
                     return Clutter.EVENT_STOP;
                 }
+
+                // Let arrow keys and other navigation pass through to clutter_text
                 return Clutter.EVENT_PROPAGATE;
             }));
 

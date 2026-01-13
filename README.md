@@ -1,5 +1,7 @@
 # Claude Panel - Cinnamon Desktop Applet
 
+**Vibe coded using Claude Opus 4.5**
+
 A lightweight Cinnamon panel applet that integrates Claude AI directly into your desktop taskbar.
 
 ## What This Does
@@ -9,6 +11,9 @@ This applet adds a chat input field directly to your Cinnamon panel, allowing yo
 ## Features
 
 - **Always-visible input field** - Chat interface embedded directly in your panel
+- **Pop-up chat window** - Expandable chat output above the panel
+- **Resizable chat window** - Drag the top edge to resize
+- **Text selection & copy** - Select text, Ctrl+C to copy, Ctrl+A to select all
 - **Permission modes** - Control how Claude operates:
   - **Normal** (default) - Asks for permission before executing commands
   - **Sudo** - System-level access with permission prompts
@@ -109,10 +114,15 @@ Settings are stored in `~/.config/claude-panel/config.json`:
 
 ## TODO
 
-- [ ] Integrate with actual Claude npm CLI
-- [ ] Show chat response window
+- [x] Integrate with actual Claude CLI
+- [x] Show chat response window
 - [ ] Implement conversation history persistence
 - [ ] Implement "Clear History" functionality
-- [ ] Auto-start on boot
+- [x] Text selection in chat output
+- [x] Copy selected text (Ctrl+C)
+- [x] Select all text (Ctrl+A)
+- [x] Resizable chat window
+- [ ] Scrollbar for chat output
+- [ ] Model selection
+- [ ] Installation script
 - [ ] Handle sudo password prompts
-- [ ] Add keyboard shortcuts
