@@ -318,12 +318,40 @@ class ClaudePanelApplet extends Applet.Applet {
         // Single label for all messages
         this._chatText = new St.Label({
             text: '',
-            style: 'color: #ccc; font-family: monospace; padding: 5px;'
+            style: 'color: #ccc; font-family: monospace; padding: 5px;',
+            reactive: true
         });
         this._chatText.clutter_text.set_line_wrap(true);
         this._chatText.clutter_text.set_line_wrap_mode(0);
         this._chatText.clutter_text.set_selectable(true);
         this._chatText.clutter_text.set_reactive(true);
+
+        // Track if chat text has keyboard focus
+        this._chatTextFocused = false;
+
+        // Connect to clutter_text directly - it handles the actual text selection
+        let clutterText = this._chatText.clutter_text;
+
+        // Handle clicks on the clutter_text - grab focus on left click, copy on right click
+        clutterText.connect('button-press-event', Lang.bind(this, function(actor, event) {
+            if (event.get_button() === 1) { // Left click - start selection and grab focus
+                this._grabChatFocus();
+                return Clutter.EVENT_PROPAGATE; // Let selection work
+            } else if (event.get_button() === 3) { // Right click - copy selection
+                this._copySelection();
+                return Clutter.EVENT_STOP;
+            }
+            return Clutter.EVENT_PROPAGATE;
+        }));
+
+        // Also ensure focus after selection completes
+        clutterText.connect('button-release-event', Lang.bind(this, function(actor, event) {
+            if (event.get_button() === 1) {
+                // Re-ensure focus after selection
+                this._grabChatFocus();
+            }
+            return Clutter.EVENT_PROPAGATE;
+        }));
 
         this._chatContainer.add(this._chatText, { expand: true });
         this._chatScrollView.add_actor(this._chatContainer);
@@ -414,6 +442,7 @@ class ClaudePanelApplet extends Applet.Applet {
     _onArrowClicked() {
         // Toggle chat window
         if (this._chatOpen) {
+            this._releaseChatFocus();
             this._chatWindow.hide();
             this._chatOpen = false;
             this._arrowIcon.set_icon_name('go-up-symbolic');
@@ -581,6 +610,84 @@ class ClaudePanelApplet extends Applet.Applet {
 
         this._chatHistory += prefix + text + '\n';
         this._chatText.set_text(this._chatHistory);
+    }
+
+    _copySelection() {
+        let selection = this._chatText.clutter_text.get_selection();
+        if (selection && selection.length > 0) {
+            let clipboard = St.Clipboard.get_default();
+            clipboard.set_text(St.ClipboardType.CLIPBOARD, selection);
+            global.log("Claude Panel: Copied to clipboard");
+        }
+    }
+
+    _grabChatFocus() {
+        if (!this._chatTextFocused) {
+            this._chatTextFocused = true;
+
+            // Mirror the entry focus pattern exactly
+            Main.pushModal(this._chatText);
+            this._chatText.clutter_text.grab_key_focus();
+
+            // Use captured-event to intercept ALL events before they reach targets
+            this._chatCapturedEventId = global.stage.connect('captured-event', Lang.bind(this, function(stageActor, stageEvent) {
+                let type = stageEvent.type();
+
+                // Only handle button press events for releasing focus
+                if (type === Clutter.EventType.BUTTON_PRESS) {
+                    let dominated = this._chatText.contains(stageEvent.get_source());
+                    if (!dominated) {
+                        this._releaseChatFocus();
+                        return Clutter.EVENT_PROPAGATE; // Let click through
+                    }
+                }
+                return Clutter.EVENT_PROPAGATE;
+            }));
+
+            // Handle key events - Ctrl+C, Ctrl+A, and Escape
+            this._chatKeyPressId = global.stage.connect('key-press-event', Lang.bind(this, function(stageActor, stageEvent) {
+                let state = stageEvent.get_state();
+                let symbol = stageEvent.get_key_symbol();
+
+                // Check for Ctrl+C
+                if ((state & Clutter.ModifierType.CONTROL_MASK) && (symbol === Clutter.KEY_c || symbol === Clutter.KEY_C)) {
+                    this._copySelection();
+                    return Clutter.EVENT_STOP;
+                }
+
+                // Check for Ctrl+A - select all
+                if ((state & Clutter.ModifierType.CONTROL_MASK) && (symbol === Clutter.KEY_a || symbol === Clutter.KEY_A)) {
+                    let text = this._chatText.clutter_text.get_text();
+                    this._chatText.clutter_text.set_selection(0, text.length);
+                    return Clutter.EVENT_STOP;
+                }
+
+                // Escape releases focus
+                if (symbol === Clutter.KEY_Escape) {
+                    this._releaseChatFocus();
+                    return Clutter.EVENT_STOP;
+                }
+                return Clutter.EVENT_PROPAGATE;
+            }));
+
+            global.log("Claude Panel: Chat focus grabbed");
+        }
+    }
+
+    _releaseChatFocus() {
+        if (this._chatTextFocused) {
+            if (this._chatCapturedEventId) {
+                global.stage.disconnect(this._chatCapturedEventId);
+                this._chatCapturedEventId = null;
+            }
+            if (this._chatKeyPressId) {
+                global.stage.disconnect(this._chatKeyPressId);
+                this._chatKeyPressId = null;
+            }
+            Main.popModal(this._chatText);
+            this._chatTextFocused = false;
+            global.log("Claude Panel: Chat focus released");
+        }
     }
 
     _scrollToBottom() {
