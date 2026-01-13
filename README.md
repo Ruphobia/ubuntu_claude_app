@@ -122,7 +122,7 @@ Settings are stored in `~/.config/claude-panel/config.json`:
 - [x] Copy selected text (Ctrl+C)
 - [x] Select all text (Ctrl+A)
 - [x] Resizable chat window
-- [ ] Scrollbar for chat output
+- [X] Scrollbar for chat output
 - [ ] Model selection
 - [ ] Installation script
 - [ ] Handle sudo password prompts

@@ -251,7 +251,7 @@ class ClaudePanelApplet extends Applet.Applet {
         global.log("Claude Panel: Clear history requested");
         // Clear all messages from chat
         this._chatHistory = '';
-        this._chatText.set_text('');
+        this._clutterText.set_text('');
         this.menu.close();
     }
 
@@ -275,7 +275,7 @@ class ClaudePanelApplet extends Applet.Applet {
 
         // Add resize handle at top
         this._resizeHandle = new St.Bin({
-            style: 'height: 12px; background-color: rgba(100,150,255,0.3); border-radius: 5px 5px 0 0; margin-bottom: 3px;',
+            style: 'height: 24px; background-color: rgba(100,150,255,0.3); border-radius: 5px 5px 0 0; margin-bottom: 3px;',
             reactive: true,
             track_hover: true
         });
@@ -288,12 +288,12 @@ class ClaudePanelApplet extends Applet.Applet {
         this._resizeHandle.set_child(handleLabel);
 
         this._resizeHandle.connect('enter-event', Lang.bind(this, function() {
-            this._resizeHandle.set_style('height: 12px; background-color: rgba(100,150,255,0.5); border-radius: 5px 5px 0 0; margin-bottom: 3px;');
+            this._resizeHandle.set_style('height: 24px; background-color: rgba(100,150,255,0.5); border-radius: 5px 5px 0 0; margin-bottom: 3px;');
         }));
 
         this._resizeHandle.connect('leave-event', Lang.bind(this, function() {
             if (!this._dragging) {
-                this._resizeHandle.set_style('height: 12px; background-color: rgba(100,150,255,0.3); border-radius: 5px 5px 0 0; margin-bottom: 3px;');
+                this._resizeHandle.set_style('height: 24px; background-color: rgba(100,150,255,0.3); border-radius: 5px 5px 0 0; margin-bottom: 3px;');
             }
         }));
 
@@ -306,34 +306,69 @@ class ClaudePanelApplet extends Applet.Applet {
             y_expand: true,
             x_fill: true,
             y_fill: true,
-            reactive: true
+            reactive: true,
+            overlay_scrollbars: false
         });
         this._chatScrollView.set_policy(St.PolicyType.NEVER, St.PolicyType.AUTOMATIC);
 
-        // Container for the label
+        // Container for the label - must NOT clip to allow scrolling
         this._chatContainer = new St.BoxLayout({
-            vertical: true
+            vertical: true,
+            clip_to_allocation: false
         });
 
-        // Single label for all messages
-        this._chatText = new St.Label({
-            text: '',
-            style: 'color: #ccc; font-family: monospace; padding: 5px;',
-            reactive: true
+        // Single label for all messages - populate with test content for debugging scrolling
+        let testContent = `Welcome to Claude Panel! This is test content to help debug scrolling functionality.
+
+Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.
+
+Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum. Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo.
+
+Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit, sed quia consequuntur magni dolores eos qui ratione voluptatem sequi nesciunt. Neque porro quisquam est, qui dolorem ipsum quia dolor sit amet, consectetur, adipisci velit.
+
+At vero eos et accusamus et iusto odio dignissimos ducimus qui blanditiis praesentium voluptatum deleniti atque corrupti quos dolores et quas molestias excepturi sint occaecati cupiditate non provident.
+
+Use arrow keys (Up/Down) or mouse wheel to scroll this content. Click on text to select and copy.
+
+> This is a sample user message
+< This is a sample Claude response with some longer text that wraps to multiple lines to test how the display handles wrapped content properly.
+
+> Another test message from user
+< Another response to test scrolling behavior when there is more content than fits in the window.
+
+End of test content.`;
+
+        // Calculate available width for text (window width minus padding)
+        let textWidth = this._chatWidth - 30; // Account for padding
+
+        // Use Clutter.Text directly for better height calculation with line wrap
+        this._clutterText = new Clutter.Text({
+            text: testContent,
+            color: Clutter.Color.from_string('#cccccc')[1],
+            font_name: 'monospace 10',
+            line_wrap: true,
+            line_wrap_mode: 0, // Pango.WrapMode.WORD_CHAR
+            selectable: true,
+            reactive: true,
+            width: textWidth
         });
-        this._chatText.clutter_text.set_line_wrap(true);
-        this._chatText.clutter_text.set_line_wrap_mode(0);
-        this._chatText.clutter_text.set_selectable(true);
-        this._chatText.clutter_text.set_reactive(true);
+
+        // Wrap in St.Bin for proper St widget integration
+        this._chatText = new St.Bin({
+            child: this._clutterText,
+            style: 'padding: 5px;',
+            x_fill: true,
+            y_fill: false
+        });
+
+        // Initialize chat history with test content
+        this._chatHistory = testContent;
 
         // Track if chat text has keyboard focus
         this._chatTextFocused = false;
 
-        // Connect to clutter_text directly - it handles the actual text selection
-        let clutterText = this._chatText.clutter_text;
-
         // Handle clicks on the clutter_text - grab focus on left click, copy on right click
-        clutterText.connect('button-press-event', Lang.bind(this, function(actor, event) {
+        this._clutterText.connect('button-press-event', Lang.bind(this, function(actor, event) {
             if (event.get_button() === 1) { // Left click - start selection and grab focus
                 this._grabChatFocus();
                 return Clutter.EVENT_PROPAGATE; // Let selection work
@@ -345,7 +380,7 @@ class ClaudePanelApplet extends Applet.Applet {
         }));
 
         // Also ensure focus after selection completes
-        clutterText.connect('button-release-event', Lang.bind(this, function(actor, event) {
+        this._clutterText.connect('button-release-event', Lang.bind(this, function(actor, event) {
             if (event.get_button() === 1) {
                 // Re-ensure focus after selection
                 this._grabChatFocus();
@@ -353,14 +388,21 @@ class ClaudePanelApplet extends Applet.Applet {
             return Clutter.EVENT_PROPAGATE;
         }));
 
-        this._chatContainer.add(this._chatText, { expand: true });
+        // Add to container
+        this._chatContainer.add(this._chatText, {
+            expand: false,
+            x_fill: true,
+            y_fill: false,
+            x_expand: true,
+            y_expand: false
+        });
         this._chatScrollView.add_actor(this._chatContainer);
 
         this._chatWindow.add(this._resizeHandle);
         this._chatWindow.add(this._chatScrollView, { expand: true });
 
-        // Track chat history as plain text
-        this._chatHistory = '';
+        // Connect scroll event directly to chat window for mouse wheel scrolling without needing focus
+        this._chatWindow.connect('scroll-event', Lang.bind(this, this._onChatScroll));
 
         // Add to chrome (top layer)
         Main.layoutManager.addChrome(this._chatWindow, {
@@ -420,7 +462,7 @@ class ClaudePanelApplet extends Applet.Applet {
     _onDragEnd(actor, event) {
         if (this._dragging) {
             this._dragging = false;
-            this._resizeHandle.set_style('height: 12px; background-color: rgba(100,150,255,0.3); border-radius: 5px 5px 0 0; margin-bottom: 3px;');
+            this._resizeHandle.set_style('height: 24px; background-color: rgba(100,150,255,0.3); border-radius: 5px 5px 0 0; margin-bottom: 3px;');
 
             // Disconnect stage events
             if (this._stageMotionId) {
@@ -435,6 +477,13 @@ class ClaudePanelApplet extends Applet.Applet {
             // Save new height to config
             this._saveConfig();
             global.log("Claude Panel: Chat height saved - " + this._chatHeight);
+
+            // Log scroll state after resize
+            let vscroll = this._chatScrollView.get_vscroll_bar();
+            if (vscroll) {
+                let adj = vscroll.get_adjustment();
+                global.log("Claude Panel: RESIZE - scroll upper=" + adj.upper + " page=" + adj.page_size);
+            }
         }
         return false;
     }
@@ -561,7 +610,7 @@ class ClaudePanelApplet extends Applet.Applet {
 
             // Add placeholder for response
             this._chatHistory += '< ';
-            this._chatText.set_text(this._chatHistory);
+            this._clutterText.set_text(this._chatHistory);
 
             // Read response
             this._readClaudeOutput(dataInputStream, '');
@@ -581,7 +630,7 @@ class ClaudePanelApplet extends Applet.Applet {
                     // Update the chat text - replace last response placeholder
                     let lastResponseStart = this._chatHistory.lastIndexOf('< ');
                     this._chatHistory = this._chatHistory.substring(0, lastResponseStart) + '< ' + accumulated.trim();
-                    this._chatText.set_text(this._chatHistory);
+                    this._clutterText.set_text(this._chatHistory);
                     this._scrollToBottom();
                     // Continue reading
                     this._readClaudeOutput(stream, accumulated);
@@ -590,16 +639,16 @@ class ClaudePanelApplet extends Applet.Applet {
                     if (accumulated.trim() === '') {
                         let lastResponseStart = this._chatHistory.lastIndexOf('< ');
                         this._chatHistory = this._chatHistory.substring(0, lastResponseStart) + '< (no response)';
-                        this._chatText.set_text(this._chatHistory);
+                        this._clutterText.set_text(this._chatHistory);
                     }
                     this._chatHistory += '\n';
-                    this._chatText.set_text(this._chatHistory);
+                    this._clutterText.set_text(this._chatHistory);
                     this._scrollToBottom();
                 }
             } catch(e) {
                 global.log("Claude Panel: Error reading output - " + e);
                 this._chatHistory += 'Error: ' + e.message + '\n';
-                this._chatText.set_text(this._chatHistory);
+                this._clutterText.set_text(this._chatHistory);
             }
         }));
     }
@@ -609,11 +658,11 @@ class ClaudePanelApplet extends Applet.Applet {
         let prefix = isUser ? '> ' : '< ';
 
         this._chatHistory += prefix + text + '\n';
-        this._chatText.set_text(this._chatHistory);
+        this._clutterText.set_text(this._chatHistory);
     }
 
     _copySelection() {
-        let selection = this._chatText.clutter_text.get_selection();
+        let selection = this._clutterText.get_selection();
         if (selection && selection.length > 0) {
             let clipboard = St.Clipboard.get_default();
             clipboard.set_text(St.ClipboardType.CLIPBOARD, selection);
@@ -627,33 +676,94 @@ class ClaudePanelApplet extends Applet.Applet {
 
             // Mirror the entry focus pattern exactly
             Main.pushModal(this._chatText);
-            this._chatText.clutter_text.grab_key_focus();
+            this._clutterText.grab_key_focus();
 
             // Use captured-event to intercept ALL events before they reach targets
+            // This handles scroll, keys, and button presses all in one place
             this._chatCapturedEventId = global.stage.connect('captured-event', Lang.bind(this, function(stageActor, stageEvent) {
                 let type = stageEvent.type();
 
-                // Handle scroll events
+                // Handle scroll events (mouse wheel)
                 if (type === Clutter.EventType.SCROLL) {
-                    let dominated = this._chatWindow.contains(stageEvent.get_source());
-                    if (dominated) {
-                        let vscroll = this._chatScrollView.get_vscroll_bar();
-                        if (vscroll) {
-                            let adjustment = vscroll.get_adjustment();
-                            let step = 50; // pixels to scroll per wheel tick
-                            let direction = stageEvent.get_scroll_direction();
+                    global.log("Claude Panel: SCROLL event received");
+                    let vscroll = this._chatScrollView.get_vscroll_bar();
+                    if (vscroll) {
+                        let adjustment = vscroll.get_adjustment();
+                        let step = 50; // pixels to scroll per wheel tick
+                        let direction = stageEvent.get_scroll_direction();
+                        global.log("Claude Panel: scroll direction=" + direction + " current=" + adjustment.get_value() + " upper=" + adjustment.upper + " page=" + adjustment.page_size);
 
-                            if (direction === Clutter.ScrollDirection.UP) {
-                                adjustment.set_value(adjustment.get_value() - step);
-                            } else if (direction === Clutter.ScrollDirection.DOWN) {
-                                adjustment.set_value(adjustment.get_value() + step);
-                            }
+                        if (direction === Clutter.ScrollDirection.UP) {
+                            adjustment.set_value(adjustment.get_value() - step);
+                            return Clutter.EVENT_STOP;
+                        } else if (direction === Clutter.ScrollDirection.DOWN) {
+                            adjustment.set_value(adjustment.get_value() + step);
                             return Clutter.EVENT_STOP;
                         }
+                    } else {
+                        global.log("Claude Panel: no vscroll bar!");
                     }
+                    return Clutter.EVENT_PROPAGATE;
                 }
 
-                // Only handle button press events for releasing focus
+                // Handle key press events (arrow keys, Ctrl+C, etc)
+                if (type === Clutter.EventType.KEY_PRESS) {
+                    let state = stageEvent.get_state();
+                    let symbol = stageEvent.get_key_symbol();
+                    global.log("Claude Panel: KEY_PRESS symbol=" + symbol + " Up=" + Clutter.KEY_Up + " Down=" + Clutter.KEY_Down);
+
+                    // Check for Ctrl+C
+                    if ((state & Clutter.ModifierType.CONTROL_MASK) && (symbol === Clutter.KEY_c || symbol === Clutter.KEY_C)) {
+                        this._copySelection();
+                        return Clutter.EVENT_STOP;
+                    }
+
+                    // Check for Ctrl+A - select all
+                    if ((state & Clutter.ModifierType.CONTROL_MASK) && (symbol === Clutter.KEY_a || symbol === Clutter.KEY_A)) {
+                        let text = this._clutterText.get_text();
+                        this._clutterText.set_selection(0, text.length);
+                        return Clutter.EVENT_STOP;
+                    }
+
+                    // Escape releases focus
+                    if (symbol === Clutter.KEY_Escape) {
+                        this._releaseChatFocus();
+                        return Clutter.EVENT_STOP;
+                    }
+
+                    // Arrow keys for scrolling (use numeric values as fallback)
+                    // Up=65362, Down=65364, Page_Up=65365, Page_Down=65366, Home=65360, End=65367
+                    if (symbol === Clutter.KEY_Up || symbol === 65362) {
+                        global.log("Claude Panel: UP arrow detected, scrolling");
+                        this._scrollByAmount(-30);
+                        return Clutter.EVENT_STOP;
+                    }
+                    if (symbol === Clutter.KEY_Down || symbol === 65364) {
+                        global.log("Claude Panel: DOWN arrow detected, scrolling");
+                        this._scrollByAmount(30);
+                        return Clutter.EVENT_STOP;
+                    }
+                    if (symbol === Clutter.KEY_Page_Up || symbol === 65365) {
+                        this._scrollByAmount(-150);
+                        return Clutter.EVENT_STOP;
+                    }
+                    if (symbol === Clutter.KEY_Page_Down || symbol === 65366) {
+                        this._scrollByAmount(150);
+                        return Clutter.EVENT_STOP;
+                    }
+                    if (symbol === Clutter.KEY_Home || symbol === 65360) {
+                        this._scrollByAmount(-99999); // Scroll to top
+                        return Clutter.EVENT_STOP;
+                    }
+                    if (symbol === Clutter.KEY_End || symbol === 65367) {
+                        this._scrollByAmount(99999); // Scroll to bottom
+                        return Clutter.EVENT_STOP;
+                    }
+
+                    return Clutter.EVENT_PROPAGATE;
+                }
+
+                // Handle button press events for releasing focus
                 if (type === Clutter.EventType.BUTTON_PRESS) {
                     let dominated = this._chatText.contains(stageEvent.get_source());
                     if (!dominated) {
@@ -661,34 +771,6 @@ class ClaudePanelApplet extends Applet.Applet {
                         return Clutter.EVENT_PROPAGATE; // Let click through
                     }
                 }
-                return Clutter.EVENT_PROPAGATE;
-            }));
-
-            // Handle key events - Ctrl+C, Ctrl+A, and Escape
-            this._chatKeyPressId = global.stage.connect('key-press-event', Lang.bind(this, function(stageActor, stageEvent) {
-                let state = stageEvent.get_state();
-                let symbol = stageEvent.get_key_symbol();
-
-                // Check for Ctrl+C
-                if ((state & Clutter.ModifierType.CONTROL_MASK) && (symbol === Clutter.KEY_c || symbol === Clutter.KEY_C)) {
-                    this._copySelection();
-                    return Clutter.EVENT_STOP;
-                }
-
-                // Check for Ctrl+A - select all
-                if ((state & Clutter.ModifierType.CONTROL_MASK) && (symbol === Clutter.KEY_a || symbol === Clutter.KEY_A)) {
-                    let text = this._chatText.clutter_text.get_text();
-                    this._chatText.clutter_text.set_selection(0, text.length);
-                    return Clutter.EVENT_STOP;
-                }
-
-                // Escape releases focus
-                if (symbol === Clutter.KEY_Escape) {
-                    this._releaseChatFocus();
-                    return Clutter.EVENT_STOP;
-                }
-
-                // Let arrow keys and other navigation pass through to clutter_text
                 return Clutter.EVENT_PROPAGATE;
             }));
 
@@ -702,13 +784,43 @@ class ClaudePanelApplet extends Applet.Applet {
                 global.stage.disconnect(this._chatCapturedEventId);
                 this._chatCapturedEventId = null;
             }
-            if (this._chatKeyPressId) {
-                global.stage.disconnect(this._chatKeyPressId);
-                this._chatKeyPressId = null;
-            }
             Main.popModal(this._chatText);
             this._chatTextFocused = false;
             global.log("Claude Panel: Chat focus released");
+        }
+    }
+
+    _onChatScroll(actor, event) {
+        // Handle mouse wheel scrolling on the chat window
+        let vscroll = this._chatScrollView.get_vscroll_bar();
+        if (vscroll) {
+            let adjustment = vscroll.get_adjustment();
+            let step = 50; // pixels to scroll per wheel tick
+            let direction = event.get_scroll_direction();
+
+            if (direction === Clutter.ScrollDirection.UP) {
+                adjustment.set_value(adjustment.get_value() - step);
+                return Clutter.EVENT_STOP;
+            } else if (direction === Clutter.ScrollDirection.DOWN) {
+                adjustment.set_value(adjustment.get_value() + step);
+                return Clutter.EVENT_STOP;
+            }
+        }
+        return Clutter.EVENT_PROPAGATE;
+    }
+
+    _scrollByAmount(amount) {
+        // Helper to scroll by a given amount (positive = down, negative = up)
+        let vscroll = this._chatScrollView.get_vscroll_bar();
+        global.log("Claude Panel: _scrollByAmount(" + amount + ") vscroll=" + vscroll);
+        if (vscroll) {
+            let adjustment = vscroll.get_adjustment();
+            let oldValue = adjustment.get_value();
+            let newValue = oldValue + amount;
+            // Clamp to valid range
+            newValue = Math.max(0, Math.min(newValue, adjustment.upper - adjustment.page_size));
+            global.log("Claude Panel: scroll old=" + oldValue + " new=" + newValue + " upper=" + adjustment.upper + " page=" + adjustment.page_size);
+            adjustment.set_value(newValue);
         }
     }
 
@@ -731,6 +843,17 @@ class ClaudePanelApplet extends Applet.Applet {
         this._chatWindow.show();
         this._chatOpen = true;
         this._arrowIcon.set_icon_name('go-down-symbolic');
+
+        // Debug: log scroll state after window opens
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, Lang.bind(this, function() {
+            let vscroll = this._chatScrollView.get_vscroll_bar();
+            if (vscroll) {
+                let adj = vscroll.get_adjustment();
+                global.log("Claude Panel: OPEN - scroll upper=" + adj.upper + " page=" + adj.page_size + " value=" + adj.get_value());
+                global.log("Claude Panel: OPEN - label height=" + this._chatText.get_height() + " container height=" + this._chatContainer.get_height());
+            }
+            return GLib.SOURCE_REMOVE;
+        }));
     }
 }
 
