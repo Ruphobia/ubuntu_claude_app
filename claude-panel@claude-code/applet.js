@@ -76,13 +76,18 @@ class ClaudePanelApplet extends Applet.Applet {
         // Load custom Claude send icon
         let iconPath = GLib.build_filenamev([global.userdatadir, 'applets', 'claude-panel@claude-code', 'claude-send-icon.svg']);
         let iconFile = Gio.File.new_for_path(iconPath);
-        let icon = new St.Icon({
+        this._sendIcon = new St.Icon({
             gicon: new Gio.FileIcon({file: iconFile}),
             icon_size: 20
         });
-        this._sendButton.set_child(icon);
+        this._sendButton.set_child(this._sendIcon);
 
-        this._sendButton.connect('clicked', Lang.bind(this, this._onSendMessage));
+        // Animation state
+        this._isAnimating = false;
+        this._currentSubprocess = null;
+        this._isPulsing = false;
+
+        this._sendButton.connect('clicked', Lang.bind(this, this._onSendButtonClicked));
 
         // Create gear button for settings menu
         this._gearButton = new St.Button({
@@ -551,6 +556,17 @@ class ClaudePanelApplet extends Applet.Applet {
         }
     }
 
+    _onSendButtonClicked() {
+        // If currently processing, stop it
+        if (this._isAnimating && this._currentSubprocess) {
+            this._stopClaude();
+            return;
+        }
+
+        // Otherwise send message
+        this._onSendMessage();
+    }
+
     _onSendMessage() {
         let message = this._entry.get_text();
         if (message.trim()) {
@@ -575,8 +591,26 @@ class ClaudePanelApplet extends Applet.Applet {
         }
     }
 
+    _stopClaude() {
+        global.log("Claude Panel: Stopping Claude process");
+
+        if (this._currentSubprocess) {
+            this._currentSubprocess.force_exit();
+            this._currentSubprocess = null;
+        }
+
+        // Add stopped message to chat
+        this._chatHistory += ' (stopped)\n';
+        this._chatClutterText.set_text(this._chatHistory);
+
+        this._stopThinkingAnimation();
+    }
+
     _sendToClaude(message) {
         try {
+            // Start thinking animation
+            this._startThinkingAnimation();
+
             // Build claude command with print mode for non-interactive output
             let cmd = ['claude', '-p', message];
 
@@ -586,6 +620,9 @@ class ClaudePanelApplet extends Applet.Applet {
                 flags: Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE
             });
             subprocess.init(null);
+
+            // Store reference so we can stop it
+            this._currentSubprocess = subprocess;
 
             // Read stdout asynchronously
             let stdout = subprocess.get_stdout_pipe();
@@ -603,6 +640,7 @@ class ClaudePanelApplet extends Applet.Applet {
         } catch(e) {
             global.log("Claude Panel: Error calling claude - " + e);
             this._addChatMessage('claude', 'Error: ' + e.message);
+            this._stopThinkingAnimation();
         }
     }
 
@@ -617,10 +655,14 @@ class ClaudePanelApplet extends Applet.Applet {
                     this._chatHistory = this._chatHistory.substring(0, lastResponseStart) + '< ' + accumulated.trim();
                     this._chatClutterText.set_text(this._chatHistory);
                     this._scrollToBottom();
+                    // Pulse the stop button to show activity
+                    this._pulseStopButton();
                     // Continue reading
                     this._readClaudeOutput(stream, accumulated);
                 } else {
-                    // Done reading
+                    // Done reading - stop animation
+                    this._stopThinkingAnimation();
+
                     if (accumulated.trim() === '') {
                         let lastResponseStart = this._chatHistory.lastIndexOf('< ');
                         this._chatHistory = this._chatHistory.substring(0, lastResponseStart) + '< (no response)';
@@ -634,6 +676,7 @@ class ClaudePanelApplet extends Applet.Applet {
                 global.log("Claude Panel: Error reading output - " + e);
                 this._chatHistory += 'Error: ' + e.message + '\n';
                 this._chatClutterText.set_text(this._chatHistory);
+                this._stopThinkingAnimation();
             }
         }));
     }
@@ -843,6 +886,66 @@ class ClaudePanelApplet extends Applet.Applet {
             }
             return GLib.SOURCE_REMOVE;
         }));
+    }
+
+    _startThinkingAnimation() {
+        if (this._isAnimating) return;
+
+        this._isAnimating = true;
+
+        // Change icon to square stop icon (media-playback-stop)
+        this._sendIcon.set_icon_name('media-playback-stop-symbolic');
+        this._sendIcon.set_gicon(null);
+
+        // Set orange/amber background like VS Code working indicator
+        this._sendButton.set_style('padding: 4px 4px; background-color: #e89b00; border-radius: 3px;');
+        this._sendIcon.set_style('color: white;');
+
+        global.log("Claude Panel: Started thinking animation");
+    }
+
+    _pulseStopButton() {
+        // Quick pulse effect when Claude updates status
+        if (!this._isAnimating || this._isPulsing) return;
+
+        this._isPulsing = true;
+
+        // Bright pulse - white/light yellow
+        this._sendButton.set_style('padding: 4px 4px; background-color: #ffdd66; border-radius: 3px;');
+
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 200, Lang.bind(this, function() {
+            if (this._isAnimating) {
+                // Back to normal orange
+                this._sendButton.set_style('padding: 4px 4px; background-color: #e89b00; border-radius: 3px;');
+            } else {
+                // Animation stopped, reset to default play button style
+                this._sendButton.set_style('padding: 4px 4px;');
+            }
+            this._isPulsing = false;
+            return GLib.SOURCE_REMOVE;
+        }));
+    }
+
+    _stopThinkingAnimation() {
+        this._isAnimating = false;
+        this._currentSubprocess = null;
+        this._isPulsing = false;
+
+        // Destroy old icon and create fresh one
+        this._sendIcon.destroy();
+
+        let iconPath = GLib.build_filenamev([global.userdatadir, 'applets', 'claude-panel@claude-code', 'claude-send-icon.svg']);
+        let iconFile = Gio.File.new_for_path(iconPath);
+        this._sendIcon = new St.Icon({
+            gicon: new Gio.FileIcon({file: iconFile}),
+            icon_size: 20
+        });
+        this._sendButton.set_child(this._sendIcon);
+
+        // Reset button style to default
+        this._sendButton.set_style('padding: 4px 4px;');
+
+        global.log("Claude Panel: Stopped thinking animation");
     }
 }
 
