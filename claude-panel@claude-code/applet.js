@@ -85,7 +85,9 @@ class ClaudePanelApplet extends Applet.Applet {
         // Animation state
         this._isAnimating = false;
         this._currentSubprocess = null;
-        this._isPulsing = false;
+        this._colorIndex = 0;
+        // Colors to cycle through while processing
+        this._stopColors = ['#e89b00', '#f5a623', '#ff8c00', '#ffaa00', '#d4881c'];
 
         this._sendButton.connect('clicked', Lang.bind(this, this._onSendButtonClicked));
 
@@ -611,31 +613,36 @@ class ClaudePanelApplet extends Applet.Applet {
             // Start thinking animation
             this._startThinkingAnimation();
 
-            // Build claude command with print mode for non-interactive output
-            let cmd = ['claude', '-p', message];
+            // Use interactive mode with JSON stream - pipe message to stdin
+            let cmd = ['claude', '--output-format', 'stream-json', '--verbose'];
 
-            // Create subprocess
+            // Create subprocess with stdin pipe
             let subprocess = new Gio.Subprocess({
                 argv: cmd,
-                flags: Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE
+                flags: Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE | Gio.SubprocessFlags.STDIN_PIPE
             });
             subprocess.init(null);
 
             // Store reference so we can stop it
             this._currentSubprocess = subprocess;
 
-            // Read stdout asynchronously
+            // Write message to stdin and close it
+            let stdin = subprocess.get_stdin_pipe();
+            stdin.write_all(message + '\n', null);
+            stdin.close(null);
+
+            // Read stdout asynchronously (JSON stream)
             let stdout = subprocess.get_stdout_pipe();
             let dataInputStream = new Gio.DataInputStream({
                 base_stream: stdout
             });
 
             // Add placeholder for response (with blank line separator)
-            this._chatHistory += '\n< ';
+            this._chatHistory += '\n< ...';
             this._chatClutterText.set_text(this._chatHistory);
 
-            // Read response
-            this._readClaudeOutput(dataInputStream, '');
+            // Read JSON stream
+            this._readClaudeJsonStream(dataInputStream, '');
 
         } catch(e) {
             global.log("Claude Panel: Error calling claude - " + e);
@@ -644,30 +651,91 @@ class ClaudePanelApplet extends Applet.Applet {
         }
     }
 
-    _readClaudeOutput(stream, accumulated) {
+    _readClaudeJsonStream(stream, responseText) {
+        // Read and parse Claude stream-json output like autoclank does
         stream.read_line_async(GLib.PRIORITY_DEFAULT, null, Lang.bind(this, function(stream, result) {
             try {
                 let [line] = stream.read_line_finish_utf8(result);
                 if (line !== null) {
-                    accumulated += line + '\n';
-                    // Update the chat text - replace last response placeholder
-                    let lastResponseStart = this._chatHistory.lastIndexOf('< ');
-                    this._chatHistory = this._chatHistory.substring(0, lastResponseStart) + '< ' + accumulated.trim();
-                    this._chatClutterText.set_text(this._chatHistory);
-                    this._scrollToBottom();
-                    // Pulse the stop button to show activity
-                    this._pulseStopButton();
-                    // Continue reading
-                    this._readClaudeOutput(stream, accumulated);
-                } else {
-                    // Done reading - stop animation
-                    this._stopThinkingAnimation();
+                    // Parse JSON line
+                    try {
+                        let event = JSON.parse(line);
+                        global.log("Claude Panel: Event type=" + event.type);
 
-                    if (accumulated.trim() === '') {
-                        let lastResponseStart = this._chatHistory.lastIndexOf('< ');
-                        this._chatHistory = this._chatHistory.substring(0, lastResponseStart) + '< (no response)';
-                        this._chatClutterText.set_text(this._chatHistory);
+                        // Cycle color on any event (shows activity)
+                        this._cycleStopButtonColor();
+
+                        // Process based on event type (matching autoclank agent logic)
+                        switch (event.type) {
+                            case 'assistant':
+                                // Assistant message - parse content blocks
+                                if (event.message && event.message.content) {
+                                    for (let i = 0; i < event.message.content.length; i++) {
+                                        let block = event.message.content[i];
+                                        if (block.type === 'tool_use') {
+                                            // Show tool being used - accumulate in activity log
+                                            let toolInfo = this._formatToolUse(block.name, block.input);
+                                            if (!this._activityLog) this._activityLog = '';
+                                            this._activityLog += '\n' + toolInfo;
+                                            // Update display
+                                            this._chatHistory += '\n' + toolInfo;
+                                            this._chatClutterText.set_text(this._chatHistory);
+                                            this._scrollToBottom();
+                                        }
+                                    }
+                                }
+                                break;
+
+                            case 'user':
+                                // Tool result events - we get permission denials from result event instead
+                                break;
+
+                            case 'result':
+                                // Final result - show response with activities
+                                let finalText = '';
+                                if (event.subtype === 'success' && event.result) {
+                                    finalText = event.result;
+                                }
+
+                                // Show permission denials if any
+                                if (event.permission_denials && event.permission_denials.length > 0) {
+                                    for (let i = 0; i < event.permission_denials.length; i++) {
+                                        let denial = event.permission_denials[i];
+                                        finalText += '\n[Permission denied: ' + denial.tool_name + ']';
+                                    }
+                                }
+
+                                // Find where response started and rebuild
+                                let lastResponseStart = this._chatHistory.lastIndexOf('\n< ...');
+                                if (lastResponseStart !== -1) {
+                                    // Keep everything before the placeholder, add result + activities
+                                    this._chatHistory = this._chatHistory.substring(0, lastResponseStart + 3) + finalText;
+                                    if (this._activityLog) {
+                                        this._chatHistory += this._activityLog;
+                                    }
+                                } else {
+                                    this._chatHistory += finalText;
+                                }
+                                this._chatHistory += '\n';
+                                this._activityLog = '';  // Reset for next message
+
+                                if (event.subtype === 'error') {
+                                    this._chatHistory += '[Error]\n';
+                                }
+                                this._chatClutterText.set_text(this._chatHistory);
+                                this._scrollToBottom();
+                                this._stopThinkingAnimation();
+                                return;
+                        }
+                    } catch(parseErr) {
+                        global.log("Claude Panel: JSON parse error: " + parseErr);
                     }
+
+                    // Continue reading
+                    this._readClaudeJsonStream(stream, responseText);
+                } else {
+                    // Stream ended
+                    this._stopThinkingAnimation();
                     this._chatHistory += '\n';
                     this._chatClutterText.set_text(this._chatHistory);
                     this._scrollToBottom();
@@ -679,6 +747,60 @@ class ClaudePanelApplet extends Applet.Applet {
                 this._stopThinkingAnimation();
             }
         }));
+    }
+
+    _appendToChat(text) {
+        // Simply append text to chat history
+        this._chatHistory += '\n' + text;
+        this._chatClutterText.set_text(this._chatHistory);
+        this._scrollToBottom();
+    }
+
+    _formatToolUse(toolName, input) {
+        // Format tool use info like autoclank does
+        let info = '[' + toolName + ']';
+
+        if (!input) return info;
+
+        try {
+            switch (toolName) {
+                case 'Edit':
+                    if (input.file_path) {
+                        info = '[Edit: ' + input.file_path + ']';
+                    }
+                    break;
+                case 'Write':
+                    if (input.file_path) {
+                        info = '[Write: ' + input.file_path + ']';
+                    }
+                    break;
+                case 'Read':
+                    if (input.file_path) {
+                        info = '[Read: ' + input.file_path + ']';
+                    }
+                    break;
+                case 'Bash':
+                    if (input.command) {
+                        let cmd = input.command;
+                        if (cmd.length > 40) {
+                            cmd = cmd.substring(0, 40) + '...';
+                        }
+                        info = '[$ ' + cmd + ']';
+                    }
+                    break;
+                case 'Grep':
+                case 'Glob':
+                    info = '[Searching...]';
+                    break;
+                case 'TodoWrite':
+                    info = '[Updating tasks...]';
+                    break;
+            }
+        } catch(e) {
+            global.log("Claude Panel: Error formatting tool use: " + e);
+        }
+
+        return info;
     }
 
     _addChatMessage(sender, text) {
@@ -904,32 +1026,33 @@ class ClaudePanelApplet extends Applet.Applet {
         global.log("Claude Panel: Started thinking animation");
     }
 
-    _pulseStopButton() {
-        // Quick pulse effect when Claude updates status
-        if (!this._isAnimating || this._isPulsing) return;
+    _cycleStopButtonColor() {
+        // Cycle through colors on each status update
+        global.log("Claude Panel: _cycleStopButtonColor called, isAnimating=" + this._isAnimating);
+        if (!this._isAnimating) return;
 
-        this._isPulsing = true;
+        // Move to next color
+        this._colorIndex = (this._colorIndex + 1) % this._stopColors.length;
+        let color = this._stopColors[this._colorIndex];
+        global.log("Claude Panel: Cycling to color index " + this._colorIndex + " = " + color);
 
-        // Bright pulse - white/light yellow
-        this._sendButton.set_style('padding: 4px 4px; background-color: #ffdd66; border-radius: 3px;');
+        // Recreate the stop icon fresh to avoid style issues
+        this._sendIcon.destroy();
+        this._sendIcon = new St.Icon({
+            icon_name: 'media-playback-stop-symbolic',
+            icon_size: 20
+        });
+        this._sendIcon.set_style('color: white;');
+        this._sendButton.set_child(this._sendIcon);
 
-        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 200, Lang.bind(this, function() {
-            if (this._isAnimating) {
-                // Back to normal orange
-                this._sendButton.set_style('padding: 4px 4px; background-color: #e89b00; border-radius: 3px;');
-            } else {
-                // Animation stopped, reset to default play button style
-                this._sendButton.set_style('padding: 4px 4px;');
-            }
-            this._isPulsing = false;
-            return GLib.SOURCE_REMOVE;
-        }));
+        this._sendButton.set_style('padding: 4px 4px; background-color: ' + color + '; border-radius: 3px;');
+        global.log("Claude Panel: Button style set to background-color: " + color);
     }
 
     _stopThinkingAnimation() {
         this._isAnimating = false;
         this._currentSubprocess = null;
-        this._isPulsing = false;
+        this._colorIndex = 0;
 
         // Destroy old icon and create fresh one
         this._sendIcon.destroy();
