@@ -1,5 +1,6 @@
 const Applet = imports.ui.applet;
 const St = imports.gi.St;
+const Clutter = imports.gi.Clutter;
 const Lang = imports.lang;
 const PopupMenu = imports.ui.popupMenu;
 const Gio = imports.gi.Gio;
@@ -47,8 +48,15 @@ class ClaudePanelApplet extends Applet.Applet {
             hint_text: 'Ask Claude...',
             track_hover: true,
             can_focus: true,
+            reactive: true,
             style: 'width: 300px; padding: 4px 8px; border: none; background-color: transparent;'
         });
+
+        // Handle click to grab focus
+        this._entry.connect('button-press-event', Lang.bind(this, function() {
+            this._entry.grab_key_focus();
+            return Clutter.EVENT_PROPAGATE;
+        }));
 
         this._entry.clutter_text.connect('activate', Lang.bind(this, this._onSendMessage));
 
@@ -310,8 +318,16 @@ class ClaudePanelApplet extends Applet.Applet {
         let [, currentY] = event.get_coords();
         let deltaY = this._dragStartY - currentY;
 
-        // Calculate new height (minimum 100px, maximum 800px)
-        let newHeight = Math.max(100, Math.min(800, this._dragStartHeight + deltaY));
+        // Calculate desired height
+        let desiredHeight = this._dragStartHeight + deltaY;
+
+        // Apply constraints (minimum 100px, maximum 800px)
+        let newHeight = Math.max(100, Math.min(800, desiredHeight));
+
+        // Only update if height actually changed
+        if (Math.abs(newHeight - this._chatHeight) < 1) {
+            return true;
+        }
 
         // Calculate actual deltaY based on constrained height
         let actualDeltaY = newHeight - this._dragStartHeight;
@@ -375,11 +391,6 @@ class ClaudePanelApplet extends Applet.Applet {
             this._entry.set_text('');
             // TODO: Send to Claude CLI and show response
         }
-    }
-
-    on_applet_clicked(event) {
-        // Focus the entry when clicking on applet
-        this._entry.grab_key_focus();
     }
 }
 
