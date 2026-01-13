@@ -251,7 +251,7 @@ class ClaudePanelApplet extends Applet.Applet {
         global.log("Claude Panel: Clear history requested");
         // Clear all messages from chat
         this._chatHistory = '';
-        this._clutterText.set_text('');
+        this._chatClutterText.set_text('');
         this.menu.close();
     }
 
@@ -317,33 +317,12 @@ class ClaudePanelApplet extends Applet.Applet {
             clip_to_allocation: false
         });
 
-        // Single label for all messages - populate with test content for debugging scrolling
-        let testContent = `Welcome to Claude Panel! This is test content to help debug scrolling functionality.
-
-Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.
-
-Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum. Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo.
-
-Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit, sed quia consequuntur magni dolores eos qui ratione voluptatem sequi nesciunt. Neque porro quisquam est, qui dolorem ipsum quia dolor sit amet, consectetur, adipisci velit.
-
-At vero eos et accusamus et iusto odio dignissimos ducimus qui blanditiis praesentium voluptatum deleniti atque corrupti quos dolores et quas molestias excepturi sint occaecati cupiditate non provident.
-
-Use arrow keys (Up/Down) or mouse wheel to scroll this content. Click on text to select and copy.
-
-> This is a sample user message
-< This is a sample Claude response with some longer text that wraps to multiple lines to test how the display handles wrapped content properly.
-
-> Another test message from user
-< Another response to test scrolling behavior when there is more content than fits in the window.
-
-End of test content.`;
-
         // Calculate available width for text (window width minus padding)
         let textWidth = this._chatWidth - 30; // Account for padding
 
         // Use Clutter.Text directly for better height calculation with line wrap
-        this._clutterText = new Clutter.Text({
-            text: testContent,
+        this._chatClutterText = new Clutter.Text({
+            text: '',
             color: Clutter.Color.from_string('#cccccc')[1],
             font_name: 'monospace 10',
             line_wrap: true,
@@ -355,20 +334,20 @@ End of test content.`;
 
         // Wrap in St.Bin for proper St widget integration
         this._chatText = new St.Bin({
-            child: this._clutterText,
+            child: this._chatClutterText,
             style: 'padding: 5px;',
             x_fill: true,
             y_fill: false
         });
 
-        // Initialize chat history with test content
-        this._chatHistory = testContent;
+        // Initialize chat history
+        this._chatHistory = '';
 
         // Track if chat text has keyboard focus
         this._chatTextFocused = false;
 
-        // Handle clicks on the clutter_text - grab focus on left click, copy on right click
-        this._clutterText.connect('button-press-event', Lang.bind(this, function(actor, event) {
+        // Handle clicks on the chat text - grab focus on left click, copy on right click
+        this._chatClutterText.connect('button-press-event', Lang.bind(this, function(actor, event) {
             if (event.get_button() === 1) { // Left click - start selection and grab focus
                 this._grabChatFocus();
                 return Clutter.EVENT_PROPAGATE; // Let selection work
@@ -380,7 +359,7 @@ End of test content.`;
         }));
 
         // Also ensure focus after selection completes
-        this._clutterText.connect('button-release-event', Lang.bind(this, function(actor, event) {
+        this._chatClutterText.connect('button-release-event', Lang.bind(this, function(actor, event) {
             if (event.get_button() === 1) {
                 // Re-ensure focus after selection
                 this._grabChatFocus();
@@ -418,6 +397,9 @@ End of test content.`;
         this._dragStartHeight = this._chatHeight;
         let [, windowY] = this._chatWindow.get_position();
         this._dragStartWindowY = windowY;
+
+        // Use modal grab to capture all pointer events during drag
+        Main.pushModal(this._resizeHandle);
 
         // Connect to stage for motion and release events
         this._stageMotionId = global.stage.connect('motion-event', Lang.bind(this, this._onDragMotion));
@@ -463,6 +445,9 @@ End of test content.`;
         if (this._dragging) {
             this._dragging = false;
             this._resizeHandle.set_style('height: 24px; background-color: rgba(100,150,255,0.3); border-radius: 5px 5px 0 0; margin-bottom: 3px;');
+
+            // Release the modal grab
+            Main.popModal(this._resizeHandle);
 
             // Disconnect stage events
             if (this._stageMotionId) {
@@ -608,9 +593,9 @@ End of test content.`;
                 base_stream: stdout
             });
 
-            // Add placeholder for response
-            this._chatHistory += '< ';
-            this._clutterText.set_text(this._chatHistory);
+            // Add placeholder for response (with blank line separator)
+            this._chatHistory += '\n< ';
+            this._chatClutterText.set_text(this._chatHistory);
 
             // Read response
             this._readClaudeOutput(dataInputStream, '');
@@ -630,7 +615,7 @@ End of test content.`;
                     // Update the chat text - replace last response placeholder
                     let lastResponseStart = this._chatHistory.lastIndexOf('< ');
                     this._chatHistory = this._chatHistory.substring(0, lastResponseStart) + '< ' + accumulated.trim();
-                    this._clutterText.set_text(this._chatHistory);
+                    this._chatClutterText.set_text(this._chatHistory);
                     this._scrollToBottom();
                     // Continue reading
                     this._readClaudeOutput(stream, accumulated);
@@ -639,16 +624,16 @@ End of test content.`;
                     if (accumulated.trim() === '') {
                         let lastResponseStart = this._chatHistory.lastIndexOf('< ');
                         this._chatHistory = this._chatHistory.substring(0, lastResponseStart) + '< (no response)';
-                        this._clutterText.set_text(this._chatHistory);
+                        this._chatClutterText.set_text(this._chatHistory);
                     }
                     this._chatHistory += '\n';
-                    this._clutterText.set_text(this._chatHistory);
+                    this._chatClutterText.set_text(this._chatHistory);
                     this._scrollToBottom();
                 }
             } catch(e) {
                 global.log("Claude Panel: Error reading output - " + e);
                 this._chatHistory += 'Error: ' + e.message + '\n';
-                this._clutterText.set_text(this._chatHistory);
+                this._chatClutterText.set_text(this._chatHistory);
             }
         }));
     }
@@ -658,11 +643,11 @@ End of test content.`;
         let prefix = isUser ? '> ' : '< ';
 
         this._chatHistory += prefix + text + '\n';
-        this._clutterText.set_text(this._chatHistory);
+        this._chatClutterText.set_text(this._chatHistory);
     }
 
     _copySelection() {
-        let selection = this._clutterText.get_selection();
+        let selection = this._chatClutterText.get_selection();
         if (selection && selection.length > 0) {
             let clipboard = St.Clipboard.get_default();
             clipboard.set_text(St.ClipboardType.CLIPBOARD, selection);
@@ -676,7 +661,7 @@ End of test content.`;
 
             // Mirror the entry focus pattern exactly
             Main.pushModal(this._chatText);
-            this._clutterText.grab_key_focus();
+            this._chatClutterText.grab_key_focus();
 
             // Use captured-event to intercept ALL events before they reach targets
             // This handles scroll, keys, and button presses all in one place
@@ -720,8 +705,8 @@ End of test content.`;
 
                     // Check for Ctrl+A - select all
                     if ((state & Clutter.ModifierType.CONTROL_MASK) && (symbol === Clutter.KEY_a || symbol === Clutter.KEY_A)) {
-                        let text = this._clutterText.get_text();
-                        this._clutterText.set_selection(0, text.length);
+                        let text = this._chatClutterText.get_text();
+                        this._chatClutterText.set_selection(0, text.length);
                         return Clutter.EVENT_STOP;
                     }
 
