@@ -642,6 +642,10 @@ class ClaudePanelApplet extends Applet.Applet {
         let isUser = sender === 'user';
         let prefix = isUser ? '> ' : '< ';
 
+        // Add blank line before message if there's existing content
+        if (this._chatHistory.length > 0) {
+            this._chatHistory += '\n';
+        }
         this._chatHistory += prefix + text + '\n';
         this._chatClutterText.set_text(this._chatHistory);
     }

@@ -3,7 +3,7 @@
     "name": "Claude Panel",
     "description": "Chat interface for Claude AI in your panel",
     "version": "1.0",
-    "build": 68,
+    "build": 69,
     "author": "Claude Code",
     "url": "https://github.com/yourusername/ubuntu_claude_app",
     "cinnamon-version": ["4.0", "4.2", "4.4", "4.6", "4.8", "5.0", "5.2", "5.4", "5.6", "5.8", "6.0"]
