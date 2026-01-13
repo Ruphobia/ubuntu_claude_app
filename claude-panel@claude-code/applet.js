@@ -250,7 +250,8 @@ class ClaudePanelApplet extends Applet.Applet {
     _onClearHistory() {
         global.log("Claude Panel: Clear history requested");
         // Clear all messages from chat
-        this._chatContent.destroy_all_children();
+        this._chatHistory = '';
+        this._chatText.set_text('');
         this.menu.close();
     }
 
@@ -304,20 +305,34 @@ class ClaudePanelApplet extends Applet.Applet {
             x_expand: true,
             y_expand: true,
             x_fill: true,
-            y_fill: true
+            y_fill: true,
+            reactive: true
         });
         this._chatScrollView.set_policy(St.PolicyType.NEVER, St.PolicyType.AUTOMATIC);
 
-        // Container for chat messages
-        this._chatContent = new St.BoxLayout({
-            vertical: true,
-            style: 'spacing: 8px;'
+        // Container for the label
+        this._chatContainer = new St.BoxLayout({
+            vertical: true
         });
 
-        this._chatScrollView.add_actor(this._chatContent);
+        // Single label for all messages
+        this._chatText = new St.Label({
+            text: '',
+            style: 'color: #ccc; font-family: monospace; padding: 5px;'
+        });
+        this._chatText.clutter_text.set_line_wrap(true);
+        this._chatText.clutter_text.set_line_wrap_mode(0);
+        this._chatText.clutter_text.set_selectable(true);
+        this._chatText.clutter_text.set_reactive(true);
+
+        this._chatContainer.add(this._chatText, { expand: true });
+        this._chatScrollView.add_actor(this._chatContainer);
 
         this._chatWindow.add(this._resizeHandle);
         this._chatWindow.add(this._chatScrollView, { expand: true });
+
+        // Track chat history as plain text
+        this._chatHistory = '';
 
         // Add to chrome (top layer)
         Main.layoutManager.addChrome(this._chatWindow, {
@@ -492,22 +507,80 @@ class ClaudePanelApplet extends Applet.Applet {
             // Scroll to bottom
             this._scrollToBottom();
 
-            // TODO: Send to Claude CLI and show response
+            // Send to Claude CLI
+            this._sendToClaude(message);
         }
+    }
+
+    _sendToClaude(message) {
+        try {
+            // Build claude command with print mode for non-interactive output
+            let cmd = ['claude', '-p', message];
+
+            // Create subprocess
+            let subprocess = new Gio.Subprocess({
+                argv: cmd,
+                flags: Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE
+            });
+            subprocess.init(null);
+
+            // Read stdout asynchronously
+            let stdout = subprocess.get_stdout_pipe();
+            let dataInputStream = new Gio.DataInputStream({
+                base_stream: stdout
+            });
+
+            // Add placeholder for response
+            this._chatHistory += '< ';
+            this._chatText.set_text(this._chatHistory);
+
+            // Read response
+            this._readClaudeOutput(dataInputStream, '');
+
+        } catch(e) {
+            global.log("Claude Panel: Error calling claude - " + e);
+            this._addChatMessage('claude', 'Error: ' + e.message);
+        }
+    }
+
+    _readClaudeOutput(stream, accumulated) {
+        stream.read_line_async(GLib.PRIORITY_DEFAULT, null, Lang.bind(this, function(stream, result) {
+            try {
+                let [line] = stream.read_line_finish_utf8(result);
+                if (line !== null) {
+                    accumulated += line + '\n';
+                    // Update the chat text - replace last response placeholder
+                    let lastResponseStart = this._chatHistory.lastIndexOf('< ');
+                    this._chatHistory = this._chatHistory.substring(0, lastResponseStart) + '< ' + accumulated.trim();
+                    this._chatText.set_text(this._chatHistory);
+                    this._scrollToBottom();
+                    // Continue reading
+                    this._readClaudeOutput(stream, accumulated);
+                } else {
+                    // Done reading
+                    if (accumulated.trim() === '') {
+                        let lastResponseStart = this._chatHistory.lastIndexOf('< ');
+                        this._chatHistory = this._chatHistory.substring(0, lastResponseStart) + '< (no response)';
+                        this._chatText.set_text(this._chatHistory);
+                    }
+                    this._chatHistory += '\n';
+                    this._chatText.set_text(this._chatHistory);
+                    this._scrollToBottom();
+                }
+            } catch(e) {
+                global.log("Claude Panel: Error reading output - " + e);
+                this._chatHistory += 'Error: ' + e.message + '\n';
+                this._chatText.set_text(this._chatHistory);
+            }
+        }));
     }
 
     _addChatMessage(sender, text) {
         let isUser = sender === 'user';
         let prefix = isUser ? '> ' : '< ';
 
-        let messageLabel = new St.Label({
-            text: prefix + text,
-            style: 'color: #ccc; font-family: monospace;'
-        });
-        messageLabel.clutter_text.set_line_wrap(true);
-        messageLabel.clutter_text.set_line_wrap_mode(0); // WORD
-
-        this._chatContent.add(messageLabel);
+        this._chatHistory += prefix + text + '\n';
+        this._chatText.set_text(this._chatHistory);
     }
 
     _scrollToBottom() {
