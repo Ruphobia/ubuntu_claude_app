@@ -241,10 +241,41 @@ class ClaudePanelApplet extends Applet.Applet {
             reactive: true
         });
 
+        // Track drag state
+        this._dragging = false;
+        this._dragStartY = 0;
+        this._dragStartHeight = 0;
+
+        // Add resize handle at top
+        this._resizeHandle = new St.Bin({
+            style: 'height: 12px; background-color: rgba(100,150,255,0.3); border-radius: 5px 5px 0 0; margin-bottom: 3px;',
+            reactive: true,
+            track_hover: true
+        });
+
+        // Add visual indicator in the resize handle
+        let handleLabel = new St.Label({
+            text: '═══',
+            style: 'color: rgba(255,255,255,0.5); font-size: 8px; text-align: center;'
+        });
+        this._resizeHandle.set_child(handleLabel);
+
+        this._resizeHandle.connect('enter-event', Lang.bind(this, function() {
+            this._resizeHandle.set_style('height: 12px; background-color: rgba(100,150,255,0.5); border-radius: 5px 5px 0 0; margin-bottom: 3px;');
+        }));
+
+        this._resizeHandle.connect('leave-event', Lang.bind(this, function() {
+            if (!this._dragging) {
+                this._resizeHandle.set_style('height: 12px; background-color: rgba(100,150,255,0.3); border-radius: 5px 5px 0 0; margin-bottom: 3px;');
+            }
+        }));
+
+        this._resizeHandle.connect('button-press-event', Lang.bind(this, this._onDragStart));
+
         // Add header with down arrow button
-        let header = new St.BoxLayout({
+        this._header = new St.BoxLayout({
             vertical: false,
-            style: 'spacing: 5px; margin-bottom: 5px;'
+            style: 'spacing: 5px; margin-bottom: 5px; padding: 5px; background-color: rgba(255,255,255,0.05); border-radius: 3px;'
         });
 
         let closeButton = new St.Button({
@@ -263,8 +294,8 @@ class ClaudePanelApplet extends Applet.Applet {
             style: 'font-weight: bold; flex: 1;'
         });
 
-        header.add(closeButton);
-        header.add(titleLabel);
+        this._header.add(closeButton);
+        this._header.add(titleLabel);
 
         // Add chat content area
         let chatContent = new St.Label({
@@ -272,7 +303,8 @@ class ClaudePanelApplet extends Applet.Applet {
             style: 'color: #ccc;'
         });
 
-        this._chatWindow.add(header);
+        this._chatWindow.add(this._resizeHandle);
+        this._chatWindow.add(this._header);
         this._chatWindow.add(chatContent);
 
         // Add to chrome (top layer)
@@ -280,6 +312,65 @@ class ClaudePanelApplet extends Applet.Applet {
             visibleInFullscreen: false,
             affectsInputRegion: true
         });
+    }
+
+    _onDragStart(actor, event) {
+        this._dragging = true;
+        let [, stageY] = event.get_coords();
+        this._dragStartY = stageY;
+        this._dragStartHeight = this._chatHeight;
+        let [, windowY] = this._chatWindow.get_position();
+        this._dragStartWindowY = windowY;
+
+        // Connect to stage for motion and release events
+        this._stageMotionId = global.stage.connect('motion-event', Lang.bind(this, this._onDragMotion));
+        this._stageReleaseId = global.stage.connect('button-release-event', Lang.bind(this, this._onDragEnd));
+
+        global.log("Claude Panel: Started dragging at Y=" + stageY + ", height=" + this._chatHeight);
+        return true;
+    }
+
+    _onDragMotion(actor, event) {
+        if (!this._dragging) return false;
+
+        let [, currentY] = event.get_coords();
+        let deltaY = this._dragStartY - currentY;
+
+        // Calculate new height (minimum 200px, maximum 800px)
+        let newHeight = Math.max(200, Math.min(800, this._dragStartHeight + deltaY));
+
+        // Update window style
+        this._chatWindow.set_style(`width: ${this._chatWidth}px; height: ${newHeight}px; background-color: #2a2a2a; border: 1px solid #555; border-radius: 5px; padding: 10px;`);
+
+        // Reposition window to keep bottom edge in same place
+        let [x, ] = this._chatWindow.get_position();
+        this._chatWindow.set_position(x, this._dragStartWindowY - deltaY);
+
+        this._chatHeight = newHeight;
+
+        return true;
+    }
+
+    _onDragEnd(actor, event) {
+        if (this._dragging) {
+            this._dragging = false;
+            this._resizeHandle.set_style('height: 12px; background-color: rgba(100,150,255,0.3); border-radius: 5px 5px 0 0; margin-bottom: 3px;');
+
+            // Disconnect stage events
+            if (this._stageMotionId) {
+                global.stage.disconnect(this._stageMotionId);
+                this._stageMotionId = null;
+            }
+            if (this._stageReleaseId) {
+                global.stage.disconnect(this._stageReleaseId);
+                this._stageReleaseId = null;
+            }
+
+            // Save new height to config
+            this._saveConfig();
+            global.log("Claude Panel: Chat height saved - " + this._chatHeight);
+        }
+        return false;
     }
 
     _onArrowClicked() {
