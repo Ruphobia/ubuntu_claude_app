@@ -6,6 +6,7 @@ const PopupMenu = imports.ui.popupMenu;
 const Gio = imports.gi.Gio;
 const GLib = imports.gi.GLib;
 const Main = imports.ui.main;
+const CinnamonEntry = imports.ui.cinnamonEntry;
 
 class ClaudePanelApplet extends Applet.Applet {
     constructor(metadata, orientation, panel_height, instance_id) {
@@ -49,16 +50,22 @@ class ClaudePanelApplet extends Applet.Applet {
             track_hover: true,
             can_focus: true,
             reactive: true,
+            x_expand: true,
             style: 'width: 300px; padding: 4px 8px; border: none; background-color: transparent;'
         });
 
-        // Handle click to grab focus
-        this._entry.connect('button-press-event', Lang.bind(this, function() {
-            this._entry.grab_key_focus();
-            return Clutter.EVENT_PROPAGATE;
-        }));
+        // Get clutter_text for text operations
+        this._clutterText = this._entry.get_clutter_text();
 
-        this._entry.clutter_text.connect('activate', Lang.bind(this, this._onSendMessage));
+        // Add context menu to entry (this sets up proper focus handling)
+        CinnamonEntry.addContextMenu(this._entry);
+
+        // Handle click to grab focus
+        this._entry.connect('button-press-event', Lang.bind(this, this._onEntryClicked));
+        this._clutterText.connect('button-press-event', Lang.bind(this, this._onEntryClicked));
+
+        // Connect activate (Enter key) to send message
+        this._clutterText.connect('activate', Lang.bind(this, this._onSendMessage));
 
         // Create send button with custom icon
         this._sendButton = new St.Button({
@@ -149,6 +156,16 @@ class ClaudePanelApplet extends Applet.Applet {
 
         // Set initial checkmarks to show which mode is selected
         this._updateCheckmarks();
+
+        // When menu closes, release entry focus state so it can be re-grabbed
+        this.menu.connect('open-state-changed', Lang.bind(this, function(menu, open) {
+            if (!open) {
+                // Menu closed - reset our focus tracking so entry can grab again
+                this._entryFocusGrabbed = false;
+                this._stageClickId = null;
+                global.log("Claude Panel: Menu closed, entry focus state reset");
+            }
+        }));
     }
 
     _onSetNormal() {
@@ -382,6 +399,65 @@ class ClaudePanelApplet extends Applet.Applet {
         }
 
         global.log("Claude Panel: Chat window " + (this._chatOpen ? "opened" : "closed"));
+    }
+
+    _onEntryClicked(actor, event) {
+        // Left click - grab focus
+        if (event.get_button() === 1) {
+            // Use the menu manager's grab to properly handle focus
+            if (!this._entryFocusGrabbed) {
+                this._entryFocusGrabbed = true;
+
+                // Grab using popup menu manager pattern
+                Main.pushModal(this._entry);
+                this._clutterText.grab_key_focus();
+
+                // Use captured-event to intercept ALL events before they reach targets
+                this._capturedEventId = global.stage.connect('captured-event', Lang.bind(this, function(stageActor, stageEvent) {
+                    let type = stageEvent.type();
+
+                    // Only handle button press events
+                    if (type === Clutter.EventType.BUTTON_PRESS) {
+                        let dominated = this._entry.contains(stageEvent.get_source());
+                        if (!dominated) {
+                            this._releaseEntryFocus();
+                            // Let the click through to whatever was clicked
+                            return Clutter.EVENT_PROPAGATE;
+                        }
+                    }
+                    return Clutter.EVENT_PROPAGATE;
+                }));
+
+                // Also release on Escape key
+                this._keyPressId = global.stage.connect('key-press-event', Lang.bind(this, function(stageActor, stageEvent) {
+                    if (stageEvent.get_key_symbol() === Clutter.KEY_Escape) {
+                        this._releaseEntryFocus();
+                        return Clutter.EVENT_STOP;
+                    }
+                    return Clutter.EVENT_PROPAGATE;
+                }));
+
+                global.log("Claude Panel: Entry focus grabbed");
+            }
+            return Clutter.EVENT_STOP;
+        }
+        return Clutter.EVENT_PROPAGATE;
+    }
+
+    _releaseEntryFocus() {
+        if (this._entryFocusGrabbed) {
+            if (this._capturedEventId) {
+                global.stage.disconnect(this._capturedEventId);
+                this._capturedEventId = null;
+            }
+            if (this._keyPressId) {
+                global.stage.disconnect(this._keyPressId);
+                this._keyPressId = null;
+            }
+            Main.popModal(this._entry);
+            this._entryFocusGrabbed = false;
+            global.log("Claude Panel: Entry focus released");
+        }
     }
 
     _onSendMessage() {
